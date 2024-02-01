@@ -1,0 +1,369 @@
+## ICSS LLC 2024
+
+
+import sys
+from PyQt5.QtWidgets import QApplication, QMainWindow, QDialog, QHBoxLayout, QListWidget, QFileDialog, QFontDialog, QTableWidget, QTableWidgetItem, QFormLayout, QInputDialog, QVBoxLayout, QWidget, QLabel, QLineEdit, QPushButton, QGridLayout, QMessageBox
+from PyQt5.QtCore import Qt
+import pandas as pd
+from docx import Document
+from docx.shared import Pt
+from docx.enum.text import WD_ALIGN_PARAGRAPH
+from datetime import datetime, timedelta
+from cryptography.hazmat.backends import default_backend
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.asymmetric import rsa
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import padding
+
+
+def generate_keys():
+    private_key = rsa.generate_private_key(
+        backend=default_backend(),
+        public_exponent=65537,
+        key_size=2048
+    )
+    public_key = private_key.public_key()
+    # Save the private and public keys to files
+
+
+def sign_invoice(invoice_content, private_key):
+    signature = private_key.sign(
+        invoice_content.encode(),
+        padding.PSS(
+            mgf=padding.MGF1(hashes.SHA256()),
+            salt_length=padding.PSS.MAX_LENGTH
+        ),
+        hashes.SHA256()
+    )
+    return signature
+
+def verify_invoice(invoice_content, signature, public_key):
+    try:
+        public_key.verify(
+            signature,
+            invoice_content.encode(),
+            padding.PSS(
+                mgf=padding.MGF1(hashes.SHA256()),
+                salt_length=padding.PSS.MAX_LENGTH
+            ),
+            hashes.SHA256()
+        )
+        return True
+    except:
+        return False
+
+
+class InvoiceApp(QMainWindow):
+    def __init__(self):
+        super().__init__()
+        self.invoice_items = []
+        self.invoices = {}  # Stores all invoices
+        self.current_invoice_id = 0  # Unique identifier for each invoice
+        self.initUI()
+
+    def initUI(self):
+        self.setWindowTitle('Invoice Generator')
+        self.setGeometry(100, 100, 800, 600)
+
+        central_widget = QWidget(self)
+        self.setCentralWidget(central_widget)
+        layout = QVBoxLayout(central_widget)
+
+        # Menu for settings
+        self.menu_bar = self.menuBar()
+        self.settings_menu = self.menu_bar.addMenu('Settings')
+        self.settings_action = self.settings_menu.addAction('Customize Invoice')
+        self.settings_action.triggered.connect(self.open_settings)
+
+        # Form layout for input fields
+        form_layout = QFormLayout()
+        self.client_name_edit = QLineEdit()
+        form_layout.addRow("Client Name:", self.client_name_edit)
+        self.client_address_edit = QLineEdit()
+        form_layout.addRow("Client Address:", self.client_address_edit)
+
+        self.item_name_edit = QLineEdit()
+        form_layout.addRow("Item Name:", self.item_name_edit)
+        self.quantity_edit = QLineEdit()
+        form_layout.addRow("Quantity:", self.quantity_edit)
+        self.price_edit = QLineEdit()
+        form_layout.addRow("Price per Item:", self.price_edit)
+
+        self.tax_rate_edit = QLineEdit()
+        form_layout.addRow("Tax Rate (%):", self.tax_rate_edit)
+        self.discount_edit = QLineEdit()
+        form_layout.addRow("Discount:", self.discount_edit)
+
+        self.add_item_button = QPushButton('Add Item')
+        self.add_item_button.clicked.connect(self.add_item)
+        form_layout.addRow(self.add_item_button)
+
+        layout.addLayout(form_layout)
+
+        # Layout for invoice list and control buttons
+        invoice_management_layout = QHBoxLayout()
+        self.invoice_list_widget = QListWidget()
+        self.add_invoice_button = QPushButton('Add Invoice')
+        self.add_invoice_button.clicked.connect(self.add_invoice)
+        self.edit_invoice_button = QPushButton('Edit Invoice')
+        self.edit_invoice_button.clicked.connect(self.edit_invoice)
+        self.export_invoice_button = QPushButton('Export Invoice')
+        self.export_invoice_button.clicked.connect(self.export_invoice)
+
+        invoice_management_layout.addWidget(self.invoice_list_widget)
+        invoice_management_layout.addWidget(self.add_invoice_button)
+        invoice_management_layout.addWidget(self.edit_invoice_button)
+        invoice_management_layout.addWidget(self.export_invoice_button)
+
+
+
+        # Table for displaying items
+        self.items_table = QTableWidget()
+        self.items_table.setColumnCount(4)
+        self.items_table.setHorizontalHeaderLabels(["Item Name", "Quantity", "Price per Item", "Total"])
+        layout.addWidget(self.items_table)
+
+        # Generate and Export Buttons
+        self.generate_button = QPushButton('Generate Invoice')
+        self.generate_button.clicked.connect(self.generate_invoice)
+        layout.addWidget(self.generate_button)
+
+        self.export_button = QPushButton('Export Invoice')
+        self.export_button.clicked.connect(self.export_invoice)
+        layout.addWidget(self.export_button)
+
+    def open_settings(self):
+        settings_dialog = SettingsDialog(self)
+        settings_dialog.exec_()
+
+    def add_item(self):
+        item_name = self.item_name_edit.text()
+        quantity_text = self.quantity_edit.text()
+        price_text = self.price_edit.text()
+
+        try:
+            quantity = int(quantity_text)
+            price = float(price_text)
+            if item_name and quantity > 0 and price > 0:
+                total_price = quantity * price
+                self.invoice_items.append((item_name, quantity, price, total_price))
+
+                # Add item to the table
+                row_position = self.items_table.rowCount()
+                self.items_table.insertRow(row_position)
+                self.items_table.setItem(row_position, 0, QTableWidgetItem(item_name))
+                self.items_table.setItem(row_position, 1, QTableWidgetItem(str(quantity)))
+                self.items_table.setItem(row_position, 2, QTableWidgetItem(str(price)))
+                self.items_table.setItem(row_position, 3, QTableWidgetItem(str(total_price)))
+
+                # Clear input fields
+                self.item_name_edit.clear()
+                self.quantity_edit.clear()
+                self.price_edit.clear()
+            else:
+                QMessageBox.warning(self, 'Error', 'Invalid item details. Please enter valid item name, quantity, and price.')
+        except ValueError:
+            QMessageBox.warning(self, 'Error', 'Quantity and Price must be numbers.')
+            
+    def add_invoice(self):
+        # Logic to add a new invoice
+        new_invoice_id = self.generate_new_invoice_id()
+        self.invoices[new_invoice_id] = {"client_name": "", "items": [], "tax_rate": 0, "discount": 0}
+        self.invoice_list_widget.addItem(f"Invoice {new_invoice_id}")
+        # Open invoice editor or use existing UI to input details
+
+    def edit_invoice(self):
+        # Logic to edit selected invoice
+        selected_invoice_id = self.get_selected_invoice_id()
+        if selected_invoice_id is not None:
+            invoice_data = self.invoices[selected_invoice_id]
+            # Open invoice editor with this data
+
+    def export_invoice(self):
+        # Logic to export selected invoice
+        selected_invoice_id = self.get_selected_invoice_id()
+        if selected_invoice_id is not None:
+            invoice_data = self.invoices[selected_invoice_id]
+            # Use existing export logic
+
+    def generate_new_invoice_id(self):
+        self.current_invoice_id += 1
+        return self.current_invoice_id
+
+    def get_selected_invoice_id(self):
+        selected_items = self.invoice_list_widget.selectedItems()
+        if selected_items:
+            selected_item_text = selected_items[0].text()
+            return int(selected_item_text.split()[1])  # Assumes the format "Invoice {id}"
+        return None        
+    
+    def generate_invoice_number(self):
+        return f"INV-{datetime.now().strftime('%Y%m%d%H%M%S')}"
+
+    def calculate_total(self):
+        # Calculate subtotal
+        try:
+            subtotal = sum(quantity * price for _, quantity, price, _ in self.invoice_items)
+        except ValueError as e:
+            QMessageBox.warning(self, 'Error', f'Error calculating subtotal: {e}')
+            return None, None
+
+        # Calculate tax and discount
+        try:
+            tax_rate = float(self.tax_rate_edit.text())
+            discount = float(self.discount_edit.text())
+        except ValueError:
+            QMessageBox.warning(self, 'Error', 'Invalid tax or discount value.')
+            return None, None
+
+        tax_amount = subtotal * (tax_rate / 100)
+        total = subtotal + tax_amount - discount
+        return subtotal, total
+
+    def generate_invoice(self):
+        subtotal, total = self.calculate_total()
+        if subtotal is not None:
+            invoice_summary = f"Subtotal: ${subtotal}\nTax: ${subtotal * (float(self.tax_rate_edit.text()) / 100)}\nDiscount: ${self.discount_edit.text()}\nTotal: ${total}"
+            QMessageBox.information(self, 'Invoice Summary', invoice_summary)
+
+    def export_invoice(self):
+        client_name = self.client_name_edit.text()
+        client_address = self.client_address_edit.text()
+        invoice_number = self.generate_invoice_number()
+        date = datetime.now().strftime('%Y-%m-%d')
+        due_date = (datetime.now() + timedelta(days=30)).strftime('%Y-%m-%d')
+        subtotal, total = self.calculate_total()
+
+        if subtotal is None:
+            return
+
+        # Choose format to export
+        format_choice, _ = QInputDialog.getItem(self, "Export Format", "Choose a format:", ["Excel", "Word", "Cancel"], 0, False)
+        if format_choice == "Cancel":
+            return
+
+        tax_rate = float(self.tax_rate_edit.text())
+        discount = float(self.discount_edit.text())
+        tax_amount = subtotal * (tax_rate / 100)
+        final_total = subtotal + tax_amount - discount
+
+        if format_choice == "Excel":
+            export_to_excel(client_name, client_address, self.invoice_items, final_total, invoice_number, date, due_date, tax_amount, discount)
+        elif format_choice == "Word":
+            export_to_word(client_name, client_address, self.invoice_items, final_total, invoice_number, date, due_date, tax_amount, discount)
+
+
+
+class SettingsDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.initUI()
+
+    def initUI(self):
+        self.setWindowTitle('Settings')
+        layout = QVBoxLayout()
+
+        # Logo selection
+        self.logo_path_edit = QLineEdit()
+        self.browse_button = QPushButton('Browse')
+        self.browse_button.clicked.connect(self.browse_logo)
+        layout.addWidget(QLabel('Company Logo:'))
+        layout.addWidget(self.logo_path_edit)
+        layout.addWidget(self.browse_button)
+
+        # Font selection
+        self.font_button = QPushButton('Choose Font')
+        self.font_button.clicked.connect(self.choose_font)
+        layout.addWidget(self.font_button)
+
+        # Default tax rate and discount
+        self.default_tax_rate_edit = QLineEdit()
+        self.default_discount_edit = QLineEdit()
+        layout.addWidget(QLabel('Default Tax Rate (%):'))
+        layout.addWidget(self.default_tax_rate_edit)
+        layout.addWidget(QLabel('Default Discount:'))
+        layout.addWidget(self.default_discount_edit)
+
+        self.setLayout(layout)
+
+    def browse_logo(self):
+        file_name, _ = QFileDialog.getOpenFileName(self, 'Select Logo', '', 'Image files (*.jpg *.png)')
+        if file_name:
+            self.logo_path_edit.setText(file_name)
+
+    def choose_font(self):
+        font, ok = QFontDialog.getFont()
+        if ok:
+            # Save the selected font for later use
+            pass
+
+def export_to_excel(client_name, client_address, items, total, invoice_number, date, due_date, tax_amount, discount):
+    import pandas as pd
+
+    # Create DataFrame from items
+    df_items = pd.DataFrame(items, columns=['Item Name', 'Quantity', 'Price per Item'])
+    df_items['Total'] = df_items['Quantity'] * df_items['Price per Item']
+
+    # Add summary rows
+    summary_data = [
+        {'Item Name': 'Subtotal', 'Total': df_items['Total'].sum()},
+        {'Item Name': 'Tax', 'Total': tax_amount},
+        {'Item Name': 'Discount', 'Total': -discount},
+        {'Item Name': 'Final Total', 'Total': total}
+    ]
+    df_summary = pd.DataFrame(summary_data)
+    final_df = pd.concat([df_items, df_summary], ignore_index=True, sort=False).fillna('')
+
+    # Exporting to Excel
+    file_name = f"{invoice_number}_{client_name}_invoice.xlsx"
+    final_df.to_excel(file_name, index=False)
+    QMessageBox.information(None, 'Export', f'Invoice exported to Excel file {file_name}')
+
+def export_to_word(client_name, client_address, items, total, invoice_number, date, due_date, tax_amount, discount):
+    from docx import Document
+    from docx.shared import Pt
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+
+    doc = Document()
+    doc.add_heading('Invoice', level=1)
+
+    # Client details
+    doc.add_paragraph(f"Invoice Number: {invoice_number}\nDate: {date}\nDue Date: {due_date}\n")
+    doc.add_paragraph(f"Invoice To:\n{client_name}\n{client_address}\n")
+
+    # Add table for items
+    table = doc.add_table(rows=1, cols=4)
+    hdr_cells = table.rows[0].cells
+    hdr_cells[0].text = 'Item Name'
+    hdr_cells[1].text = 'Quantity'
+    hdr_cells[2].text = 'Price per Item'
+    hdr_cells[3].text = 'Total'
+
+    for item in items:
+        # Assuming each 'item' is a tuple or list with four elements
+        item_name, quantity, price, _ = item  # Adjust unpacking based on your actual data structure
+        row_cells = table.add_row().cells
+        row_cells[0].text = str(item_name)
+        row_cells[1].text = str(quantity)
+        row_cells[2].text = str(price)
+        row_cells[3].text = str(quantity * price)
+
+    # Summary
+    doc.add_paragraph(f"Subtotal: ${sum(quantity * price for _, quantity, price, _ in items)}")
+    doc.add_paragraph(f"Tax: ${tax_amount}")
+    doc.add_paragraph(f"Discount: ${discount}")
+    doc.add_paragraph(f"Total: ${total}")
+
+    # Exporting to Word
+    file_name = f"{invoice_number}_{client_name}_invoice.docx"
+    doc.save(file_name)
+
+def main():
+    app = QApplication(sys.argv)
+    ex = InvoiceApp()
+    ex.show()
+    sys.exit(app.exec_())
+
+
+if __name__ == '__main__':
+    main()
